@@ -1,16 +1,16 @@
 [English](README.md) | 中文
 
-# auto-sub
+# 🎬 auto-sub
 
-一个可自托管的小工具，批量给视频生成**简体中文**字幕。它扫描一个目录，对还没字幕的视频转写音频、用 LLM 翻成中文，并把 `<视频名>.zh.srt` 写到视频同目录。
+一个可自托管的小工具，批量给视频生成**简体中文**字幕。📝 它扫描一个目录，对还没字幕的视频转写音频、用 LLM 翻成中文，并把 `<视频名>.zh.srt` 写到视频同目录。
 
-> **输出语言：仅简体中文**（`*.zh.srt`）。**源**语言可配置（`SOURCE_LANG`）；**目标**语言由 `subtitle_batch.py` 里的翻译 prompt 固定为中文——要翻成别的语言，改那段 prompt 和 `.zh.srt` 后缀即可。
+> 🈶 **输出语言：仅简体中文**（`*.zh.srt`）。**源**语言可配置（`SOURCE_LANG`）；**目标**语言由 `subtitle_batch.py` 里的翻译 prompt 固定为中文——要翻成别的语言，改那段 prompt 和 `.zh.srt` 后缀即可。
 
-链路：`ffmpeg 抽音 → faster-whisper 转写 → LLM 翻成中文 → .zh.srt`。
+🔗 链路：`ffmpeg 抽音 → faster-whisper 转写 → LLM 翻成中文 → .zh.srt`。
 
-已有字幕的视频自动跳过，可随时停/重启续跑。
+♻️ 已有字幕的视频自动跳过，可随时停/重启续跑。
 
-## 快速开始
+## 🚀 快速开始
 
 ```bash
 cp .env.example .env        # 首次：填好 LLM 接口地址、模型、key
@@ -20,9 +20,9 @@ docker compose logs -f      # 看进度
 docker compose down         # 停
 ```
 
-容器启动即扫一遍，之后每天 `SCAN_HOUR` 点再扫；每轮只补还没字幕的视频。
+⏰ 容器启动即扫一遍，之后每天 `SCAN_HOUR` 点再扫；每轮只补还没字幕的视频。
 
-## 配置
+## ⚙️ 配置
 
 全部都在 `.env` 里：
 
@@ -43,16 +43,18 @@ docker compose down         # 停
 | `PUID` / `PGID` | 容器运行身份的 UID/GID，生成的字幕归属该用户 |
 | `LLM_NETWORK` | 为连到网关而加入的外部 Docker 网络（见说明） |
 
-## 说明
+## 💡 说明
 
-- **只输出简体中文**（`.zh.srt`）。要翻成别的语言，改 `subtitle_batch.py` 里的翻译 prompt 和输出后缀。
-- **翻译后端**是任意 OpenAI 兼容的 Chat Completions 接口——本地网关（LiteLLM、vLLM、Ollama……）或云 API 都行。把 `LITELLM_URL`/`LLM_MODEL`/`TRANSLATE_KEY` 指向你用的那个；想全程不出网就用本地的。
-- **转写**可跑在 CPU 或 GPU；设备、线程、CPU 权重都可配，按机器调资源占用。
-- whisper 模型缓存在 `./cache`，首次启动下载一次，之后复用。
-- **网络**：容器默认加入一个外部 Docker 网络（`LLM_NETWORK`），以便用服务名连到同机网关。如果你的接口是公网 URL（或本就可直达），把 `docker-compose.yml` 里的 `networks:` 段删掉即可。
-- 自动忽略 macOS 的 `._*` 垃圾文件。
+- 🈶 **只输出简体中文**（`.zh.srt`）。要翻成别的语言，改 `subtitle_batch.py` 里的翻译 prompt 和输出后缀。
+- 🔌 **翻译后端**是任意 OpenAI 兼容的 Chat Completions 接口——本地网关（LiteLLM、vLLM、Ollama……）或云 API 都行。把 `LITELLM_URL`/`LLM_MODEL`/`TRANSLATE_KEY` 指向你用的那个；想全程不出网就用本地的。🔒
+- ⚡ **转写和翻译是流水线**：CPU 在翻译当前视频的同时就转写下一个，CPU 不再干等 LLM。
+- 🖥️ **转写**可跑在 CPU 或 GPU；设备、线程、CPU 权重都可配，按机器调资源占用。
+- 💾 字幕采用原子写（临时文件 + 改名），中途被打断也绝不会留下半截 `.srt`。
+- 📦 whisper 模型缓存在 `./cache`，首次启动下载一次，之后复用。
+- 🌐 **网络**：容器默认加入一个外部 Docker 网络（`LLM_NETWORK`），以便用服务名连到同机网关。如果你的接口是公网 URL（或本就可直达），把 `docker-compose.yml` 里的 `networks:` 段删掉即可。
+- 🧹 自动忽略 macOS 的 `._*` 垃圾文件。
 
-## 不用 Docker 直接跑
+## 🐍 不用 Docker 直接跑
 
 翻译器就是个依赖很少的单文件脚本，可直接运行：
 
@@ -63,6 +65,6 @@ python subtitle_batch.py --dir /path/to/videos
 
 所有选项都能用命令行参数传（`--model`、`--lang`、`--threads`、`--litellm-url`、`--llm-model`、`--batch`……），或用与容器相同的环境变量。
 
-## 许可证
+## 📄 许可证
 
 [MIT](LICENSE)
