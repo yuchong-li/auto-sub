@@ -9,9 +9,11 @@ ffmpeg 抽音 -> faster-whisper 转写(日文,CPU) -> LiteLLM/gemma 翻译 -> *.
 import argparse
 import json
 import os
+import queue
 import re
 import subprocess
 import sys
+import threading
 import tempfile
 import time
 import urllib.request
@@ -157,39 +159,99 @@ def write_srt(cues, path):
     parts = []
     for i, c in enumerate(cues, 1):
         parts.append(f"{i}\n{fmt_ts(c['start'])} --> {fmt_ts(c['end'])}\n{c.get('zh', c['ja'])}\n")
-    with open(path, "w", encoding="utf-8") as f:
-        f.write("\n".join(parts) + "\n")
+    data = "\n".join(parts) + "\n"
+    # 原子写：先写同目录临时文件再 os.replace，绝不会留半截 .zh.srt 被误判为完成
+    d = os.path.dirname(path) or "."
+    fd, tmp = tempfile.mkstemp(suffix=".srt.tmp", dir=d)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(data)
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        raise
 
 
-# ---------- 主流程 ----------
+# ---------- 主流程（转写/翻译流水线）----------
 
-def process_one(model, video, args):
-    out_srt = srt_path_for(video)
-    if os.path.exists(out_srt) and not args.force:
-        log(f"跳过（已有字幕）: {video}")
-        return "skip"
-    log(f"\n=== 处理: {video}")
-    t0 = time.time()
+def transcribe_video(model, video, args):
+    """CPU 阶段：抽音 + 转写，返回 cues（用完即删临时音频）。"""
     tmp_wav = tempfile.NamedTemporaryFile(suffix=".wav", delete=False).name
     try:
-        log("  [1/3] 抽取音频…")
+        log(f"[转写] 抽音+识别: {video}")
         extract_audio(video, tmp_wav, args.max_seconds)
-        log("  [2/3] 转写日文（CPU，可能较久）…")
         cues = transcribe(model, tmp_wav, args.lang)
-        if not cues:
-            log("  未识别到任何语音，跳过。")
-            return "empty"
-        log(f"        识别到 {len(cues)} 句")
-        log("  [3/3] 翻译为中文（gemma via LiteLLM）…")
-        translate_cues(cues, args.litellm_url, args.api_key, args.llm_model, args.batch)
-        write_srt(cues, out_srt)
-        log(f"  完成 -> {out_srt}  (用时 {int(time.time()-t0)} 秒)")
-        return "ok"
+        log(f"[转写] 识别到 {len(cues)} 句: {video}")
+        return cues
     finally:
         try:
             os.remove(tmp_wav)
         except OSError:
             pass
+
+
+def translate_video(video, cues, args):
+    """GPU 阶段：翻译 + 写 srt。"""
+    t0 = time.time()
+    log(f"[翻译] 开始（{len(cues)} 句）: {video}")
+    translate_cues(cues, args.litellm_url, args.api_key, args.llm_model, args.batch)
+    write_srt(cues, srt_path_for(video))
+    log(f"[翻译] 完成 -> {srt_path_for(video)}  (翻译用时 {int(time.time()-t0)} 秒)")
+
+
+def run_pipeline(videos, model, args):
+    """转写(CPU)与翻译(GPU)解耦：CPU 转完一个立刻转下一个，
+    翻译线程并行处理已转好的，避免转写时 CPU 干等 GPU。"""
+    q = queue.Queue(maxsize=2)            # 缓冲尽量小：崩溃时最多丢这么多"转好待翻"的工作
+    stats = {"ok": 0, "skip": 0, "empty": 0, "fail": 0}
+    lock = threading.Lock()
+
+    def bump(key):
+        with lock:
+            stats[key] += 1
+
+    def producer():                        # CPU：逐个转写，喂给队列
+        for v in videos:
+            if os.path.exists(srt_path_for(v)) and not args.force:
+                log(f"跳过（已有字幕）: {v}")
+                bump("skip")
+                continue
+            try:
+                cues = transcribe_video(model, v, args)
+            except Exception as e:
+                log(f"  !! 转写失败: {v}\n     {e}")
+                bump("fail")
+                continue
+            if not cues:
+                log(f"  未识别到语音，跳过: {v}")
+                bump("empty")
+                continue
+            q.put((v, cues))
+        q.put(None)                        # 结束信号
+
+    def consumer():                        # GPU：从队列取，翻译并写 srt
+        while True:
+            item = q.get()
+            if item is None:
+                break
+            v, cues = item
+            try:
+                translate_video(v, cues, args)
+                bump("ok")
+            except Exception as e:
+                log(f"  !! 翻译失败: {v}\n     {e}")
+                bump("fail")
+
+    t_cons = threading.Thread(target=consumer, name="translate", daemon=True)
+    t_prod = threading.Thread(target=producer, name="transcribe", daemon=True)
+    t_cons.start()
+    t_prod.start()
+    t_prod.join()
+    t_cons.join()
+    return stats
 
 
 def main():
@@ -229,13 +291,7 @@ def main():
     model = WhisperModel(args.model, device=args.device, compute_type=args.compute_type,
                          cpu_threads=args.threads)
 
-    stats = {"ok": 0, "skip": 0, "empty": 0, "fail": 0}
-    for v in videos:
-        try:
-            stats[process_one(model, v, args)] += 1
-        except Exception as e:
-            log(f"  !! 失败: {v}\n     {e}")
-            stats["fail"] += 1
+    stats = run_pipeline(videos, model, args)
     log(f"\n全部结束: {stats}")
 
 
