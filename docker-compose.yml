@@ -1,0 +1,25 @@
+services:
+  subtitle-translator:
+    build: .
+    image: subtitle-translator:latest
+    container_name: subtitle-translator
+    restart: unless-stopped
+    env_file: .env
+    user: "${PUID}:${PGID}"
+    environment:
+      HF_HOME: /cache
+      HOME: /cache
+    volumes:
+      - "${VIDEO_DIR}:${VIDEO_DIR}"   # 视频 + 输出字幕（同路径）
+      - "./cache:/cache"              # whisper 模型缓存，宿主机持久化
+    networks:
+      - llm-gateway
+    cpu_shares: ${CPU_SHARES}         # relative CPU weight; yields under contention
+
+networks:
+  llm-gateway:
+    # External network where your LLM gateway runs, so it's reachable by
+    # service name. Delete this (and the service's networks: above) if your
+    # endpoint is a public URL.
+    name: ${LLM_NETWORK:-litellm_default}
+    external: true

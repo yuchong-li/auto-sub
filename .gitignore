@@ -1,0 +1,9 @@
+# secrets & local config
+.env
+
+# whisper model cache (large, downloaded on first run)
+cache/
+
+# python
+__pycache__/
+*.pyc
